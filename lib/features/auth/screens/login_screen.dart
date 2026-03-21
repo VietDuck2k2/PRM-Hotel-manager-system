@@ -4,6 +4,7 @@ import '../session_provider.dart';
 import '../../../core/constants/app_routes.dart';
 import '../../../core/constants/app_enums.dart';
 import '../../../shared/widgets/primary_button.dart';
+import '../../../shared/widgets/error_snackbar.dart';
 
 /// Login screen. Entry point for all roles.
 /// Owner: Member 1
@@ -18,19 +19,22 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _usernameCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
+  final _usernameFocus = FocusNode();
+  final _passwordFocus = FocusNode();
   bool _isLoading = false;
-  String? _errorMessage;
 
   @override
   void dispose() {
     _usernameCtrl.dispose();
     _passwordCtrl.dispose();
+    _usernameFocus.dispose();
+    _passwordFocus.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    setState(() { _isLoading = true; _errorMessage = null; });
+    setState(() => _isLoading = true);
 
     final session = context.read<SessionProvider>();
     final success = await session.login(_usernameCtrl.text.trim(), _passwordCtrl.text);
@@ -39,7 +43,9 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = false);
 
     if (!success) {
-      setState(() => _errorMessage = 'Invalid username or password.');
+      if (mounted) {
+        ErrorSnackbar.show(context, 'Invalid username or password.');
+      }
       return;
     }
 
@@ -78,6 +84,10 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 32),
                 TextFormField(
                   controller: _usernameCtrl,
+                  focusNode: _usernameFocus,
+                  textInputAction: TextInputAction.next,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).requestFocus(_passwordFocus),
                   decoration: const InputDecoration(
                     labelText: 'Username',
                     prefixIcon: Icon(Icons.person),
@@ -87,21 +97,16 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 16),
                 TextFormField(
                   controller: _passwordCtrl,
+                  focusNode: _passwordFocus,
                   obscureText: true,
+                  textInputAction: TextInputAction.done,
+                  onFieldSubmitted: (_) => _submit(),
                   decoration: const InputDecoration(
                     labelText: 'Password',
                     prefixIcon: Icon(Icons.lock),
                   ),
                   validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
                 ),
-                if (_errorMessage != null) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    _errorMessage!,
-                    style: const TextStyle(color: Colors.red),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
                 const SizedBox(height: 24),
                 PrimaryButton(
                   label: 'Login',
