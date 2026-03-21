@@ -31,7 +31,7 @@ class AdminDashboard extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         crossAxisSpacing: 12,
         mainAxisSpacing: 12,
-        children: [
+        children: const [
           _DashboardTile(icon: Icons.people, label: 'Staff', route: AppRoutes.staffList),
           _DashboardTile(icon: Icons.category, label: 'Room Types', route: AppRoutes.roomTypeList),
           _DashboardTile(icon: Icons.meeting_room, label: 'Rooms', route: AppRoutes.roomList),
@@ -70,7 +70,7 @@ class ReceptionistDashboard extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         crossAxisSpacing: 12,
         mainAxisSpacing: 12,
-        children: [
+        children: const [
           _DashboardTile(icon: Icons.book_online, label: 'Bookings', route: AppRoutes.bookingList),
           _DashboardTile(icon: Icons.meeting_room, label: 'Rooms', route: AppRoutes.roomList),
           _DashboardTile(icon: Icons.login, label: 'Check-In', route: AppRoutes.checkIn),
@@ -102,7 +102,7 @@ class HousekeepingDashboard extends StatelessWidget {
           )
         ],
       ),
-      body: Center(
+      body: const Center(
         child: _DashboardTile(
           icon: Icons.cleaning_services,
           label: 'Cleaning Tasks',
