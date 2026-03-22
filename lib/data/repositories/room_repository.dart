@@ -48,9 +48,38 @@ class RoomRepository {
     required int checkInMs,
     required int checkOutMs,
   }) async {
-    // TODO: [Module C] implement overlap-aware room availability query
-    // Placeholder return to keep it compile-safe
-    return [];
+    final db = await _dbHelper.database;
+
+    // Availability eligibility:
+    // - room must be AVAILABLE now (housekeeping has to mark DIRTY -> AVAILABLE)
+    // - and there must be NO overlapping active booking (BOOKED/CHECKED_IN)
+    //   with overlap condition: checkInDate < requestedCheckOut AND checkOutDate > requestedCheckIn
+    final sql = '''
+      SELECT *
+      FROM ${DbSchema.tableRooms} r
+      WHERE r.roomTypeId = ?
+        AND r.status = ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${DbSchema.tableBookings} b
+          WHERE b.roomId = r.id
+            AND b.status IN (?, ?)
+            AND b.checkInDate < ?
+            AND b.checkOutDate > ?
+        )
+      ORDER BY r.roomNumber ASC
+    ''';
+
+    final result = await db.rawQuery(sql, [
+      roomTypeId,
+      RoomStatus.available.toDbString(),
+      BookingStatus.booked.toDbString(),
+      BookingStatus.checkedIn.toDbString(),
+      checkOutMs,
+      checkInMs,
+    ]);
+
+    return result.map(RoomModel.fromMap).toList();
   }
 
   Future<int> createRoom(RoomModel room) async {
