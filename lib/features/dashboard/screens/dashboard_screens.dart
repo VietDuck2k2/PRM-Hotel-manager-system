@@ -165,6 +165,7 @@ class _DashboardTile extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Icon(data.icon, size: 40, color: const Color(0xFF1A6B8A)),
               const SizedBox(height: 8),

@@ -27,14 +27,27 @@ class RoomStatusBadge extends StatelessWidget {
     }
   }
 
+  String _label() {
+    switch (status) {
+      case RoomStatus.available:
+        return 'Available';
+      case RoomStatus.occupied:
+        return 'Occupied';
+      case RoomStatus.dirty:
+        return 'Dirty';
+      case RoomStatus.outOfService:
+        return 'Out of service';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = _badgeColor();
-    final label = status.toDbString().replaceAll('_', ' ');
+    final label = _label();
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: c.withValues(alpha: 31),
+        color: c.withValues(alpha: 0.15),
         border: Border.all(color: c),
         borderRadius: BorderRadius.circular(999),
       ),
