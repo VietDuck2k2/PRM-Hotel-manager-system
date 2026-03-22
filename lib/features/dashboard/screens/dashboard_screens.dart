@@ -14,12 +14,24 @@ class AdminDashboard extends StatelessWidget {
     return _DashboardGrid(
       title: 'Admin Dashboard',
       tiles: const [
-        _DashboardTileData(icon: Icons.people, label: 'Staff', route: AppRoutes.staffList),
-        _DashboardTileData(icon: Icons.category, label: 'Room Types', route: AppRoutes.roomTypeList),
-        _DashboardTileData(icon: Icons.meeting_room, label: 'Rooms', route: AppRoutes.roomList),
-        _DashboardTileData(icon: Icons.book_online, label: 'Bookings', route: AppRoutes.bookingList),
-        _DashboardTileData(icon: Icons.login, label: 'Check-In', route: AppRoutes.checkIn),
-        _DashboardTileData(icon: Icons.logout, label: 'Check-Out', route: AppRoutes.checkout),
+        _DashboardTileData(
+            icon: Icons.people, label: 'Staff', route: AppRoutes.staffList),
+        _DashboardTileData(
+            icon: Icons.category,
+            label: 'Room Types',
+            route: AppRoutes.roomTypeList),
+        _DashboardTileData(
+            icon: Icons.meeting_room,
+            label: 'Rooms',
+            route: AppRoutes.roomList),
+        _DashboardTileData(
+            icon: Icons.book_online,
+            label: 'Bookings',
+            route: AppRoutes.bookingList),
+        _DashboardTileData(
+            icon: Icons.login, label: 'Check-In', route: AppRoutes.checkIn),
+        _DashboardTileData(
+            icon: Icons.logout, label: 'Check-Out', route: AppRoutes.checkout),
       ],
     );
   }
@@ -34,10 +46,18 @@ class ReceptionistDashboard extends StatelessWidget {
     return _DashboardGrid(
       title: 'Receptionist Dashboard',
       tiles: const [
-        _DashboardTileData(icon: Icons.book_online, label: 'Bookings', route: AppRoutes.bookingList),
-        _DashboardTileData(icon: Icons.meeting_room, label: 'Rooms', route: AppRoutes.roomList),
-        _DashboardTileData(icon: Icons.login, label: 'Check-In', route: AppRoutes.checkIn),
-        _DashboardTileData(icon: Icons.logout, label: 'Check-Out', route: AppRoutes.checkout),
+        _DashboardTileData(
+            icon: Icons.book_online,
+            label: 'Bookings',
+            route: AppRoutes.bookingList),
+        _DashboardTileData(
+            icon: Icons.meeting_room,
+            label: 'Rooms',
+            route: AppRoutes.roomList),
+        _DashboardTileData(
+            icon: Icons.login, label: 'Check-In', route: AppRoutes.checkIn),
+        _DashboardTileData(
+            icon: Icons.logout, label: 'Check-Out', route: AppRoutes.checkout),
       ],
     );
   }

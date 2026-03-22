@@ -67,10 +67,12 @@ class _LoginScreenState extends State<LoginScreen> {
         Navigator.pushReplacementNamed(context, AppRoutes.adminDashboard);
         return;
       case StaffRole.receptionist:
-        Navigator.pushReplacementNamed(context, AppRoutes.receptionistDashboard);
+        Navigator.pushReplacementNamed(
+            context, AppRoutes.receptionistDashboard);
         return;
       case StaffRole.housekeeping:
-        Navigator.pushReplacementNamed(context, AppRoutes.housekeepingDashboard);
+        Navigator.pushReplacementNamed(
+            context, AppRoutes.housekeepingDashboard);
         return;
       case null:
         _showError('Unable to determine user role. Please login again.');
@@ -99,12 +101,14 @@ class _LoginScreenState extends State<LoginScreen> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const Icon(Icons.hotel, size: 64, color: Color(0xFF1A6B8A)),
+                      const Icon(Icons.hotel,
+                          size: 64, color: Color(0xFF1A6B8A)),
                       const SizedBox(height: 8),
                       const Text(
                         'Hotel Management System',
                         textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                            fontSize: 20, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 32),
                       TextFormField(

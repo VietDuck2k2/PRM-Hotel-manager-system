@@ -4,7 +4,6 @@ import '../../core/database/database_helper.dart';
 import '../../core/constants/db_schema.dart';
 import '../models/user_model.dart';
 
-
 /// Handles authentication queries against the local SQLite database.
 /// Owner: Member 1
 class AuthRepository {
