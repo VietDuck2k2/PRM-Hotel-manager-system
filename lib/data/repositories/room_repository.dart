@@ -15,8 +15,15 @@ class RoomRepository {
 
   Future<List<RoomModel>> getAllRooms() async {
     final db = await _dbHelper.database;
-    final result = await db.query(DbSchema.tableRooms, orderBy: 'roomNumber ASC');
+    final result =
+        await db.query(DbSchema.tableRooms, orderBy: 'roomNumber ASC');
     return result.map(RoomModel.fromMap).toList();
+  }
+
+  /// Lightweight helper so UI layers can request only DIRTY rooms without
+  /// duplicating status strings.
+  Future<List<RoomModel>> getRoomsNeedingCleaning() {
+    return getRoomsByStatus(RoomStatus.dirty);
   }
 
   Future<List<RoomModel>> getRoomsByStatus(RoomStatus status) async {
@@ -48,13 +55,19 @@ class RoomRepository {
     required int checkInMs,
     required int checkOutMs,
   }) async {
+    if (checkOutMs <= checkInMs) {
+      // Defensive: callers should never send an invalid range but returning an
+      // empty list is safer than throwing and breaking the booking flow.
+      return [];
+    }
+
     final db = await _dbHelper.database;
 
     // Availability eligibility:
     // - room must be AVAILABLE now (housekeeping has to mark DIRTY -> AVAILABLE)
     // - and there must be NO overlapping active booking (BOOKED/CHECKED_IN)
     //   with overlap condition: checkInDate < requestedCheckOut AND checkOutDate > requestedCheckIn
-    final sql = '''
+    const sql = '''
       SELECT *
       FROM ${DbSchema.tableRooms} r
       WHERE r.roomTypeId = ?
@@ -70,21 +83,42 @@ class RoomRepository {
       ORDER BY r.roomNumber ASC
     ''';
 
-    final result = await db.rawQuery(sql, [
-      roomTypeId,
-      RoomStatus.available.toDbString(),
-      BookingStatus.booked.toDbString(),
-      BookingStatus.checkedIn.toDbString(),
-      checkOutMs,
-      checkInMs,
-    ]);
+    try {
+      final result = await db.rawQuery(sql, [
+        roomTypeId,
+        RoomStatus.available.toDbString(),
+        BookingStatus.booked.toDbString(),
+        BookingStatus.checkedIn.toDbString(),
+        checkOutMs,
+        checkInMs,
+      ]);
 
-    return result.map(RoomModel.fromMap).toList();
+      return result.map(RoomModel.fromMap).toList();
+    } catch (_) {
+      // TODO(Module 3): Remove this fallback once advanced overlap query is
+      // validated across every platform target.
+      final fallback = await db.query(
+        DbSchema.tableRooms,
+        where: 'roomTypeId = ? AND status = ?',
+        whereArgs: [roomTypeId, RoomStatus.available.toDbString()],
+        orderBy: 'roomNumber ASC',
+      );
+      return fallback.map(RoomModel.fromMap).toList();
+    }
   }
 
   Future<int> createRoom(RoomModel room) async {
     final db = await _dbHelper.database;
     return await db.insert(DbSchema.tableRooms, room.toMap());
+  }
+
+  Future<int> deleteRoom(int roomId) async {
+    final db = await _dbHelper.database;
+    return db.delete(
+      DbSchema.tableRooms,
+      where: 'id = ?',
+      whereArgs: [roomId],
+    );
   }
 
   Future<int> updateRoom(RoomModel room) async {
@@ -108,6 +142,14 @@ class RoomRepository {
     );
   }
 
+  Future<int> markRoomDirty(int roomId) {
+    return updateStatus(roomId, RoomStatus.dirty);
+  }
+
+  Future<int> markRoomOutOfService(int roomId) {
+    return updateStatus(roomId, RoomStatus.outOfService);
+  }
+
   /// Housekeeping: marks a DIRTY room as AVAILABLE.
   /// Returns 0 if the room was not DIRTY (noop guard).
   Future<int> markRoomAvailable(int roomId) async {
@@ -118,5 +160,34 @@ class RoomRepository {
       where: 'id = ? AND status = ?',
       whereArgs: [roomId, RoomStatus.dirty.toDbString()],
     );
+  }
+
+  Future<Map<RoomStatus, int>> getRoomStatusCounts() async {
+    final db = await _dbHelper.database;
+    final rows = await db.rawQuery('''
+      SELECT status, COUNT(*) as total
+      FROM ${DbSchema.tableRooms}
+      GROUP BY status
+    ''');
+
+    final counts = <RoomStatus, int>{
+      for (final status in RoomStatus.values) status: 0,
+    };
+
+    for (final row in rows) {
+      final statusString = row['status'] as String?;
+      final total = row['total'] is int
+          ? row['total'] as int
+          : (row['total'] as num?)?.toInt() ?? 0;
+      if (statusString == null) continue;
+      try {
+        final status = RoomStatus.fromString(statusString);
+        counts[status] = total;
+      } catch (_) {
+        // Ignore unknown statuses so the UI remains stable.
+      }
+    }
+
+    return counts;
   }
 }

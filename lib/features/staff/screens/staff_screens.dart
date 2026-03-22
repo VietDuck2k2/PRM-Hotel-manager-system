@@ -24,13 +24,18 @@ class _StaffListScreenState extends State<StaffListScreen> {
   @override
   void initState() {
     super.initState();
-    _future = _repo.getAllUsers();
+    _future = _loadUsers();
   }
 
-  void _refresh() {
+  Future<List<UserModel>> _loadUsers() {
+    return _repo.getUsers(includeInactive: _showDeactivated);
+  }
+
+  Future<void> _refresh() async {
     setState(() {
-      _future = _repo.getAllUsers();
+      _future = _loadUsers();
     });
+    await _future;
   }
 
   Future<void> _confirmDeactivate(UserModel user) async {
@@ -60,7 +65,17 @@ class _StaffListScreenState extends State<StaffListScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Deactivated "${user.fullName}"')),
     );
-    _refresh();
+    await _refresh();
+  }
+
+  Future<void> _reactivate(UserModel user) async {
+    if (user.id == null) return;
+    await _repo.reactivateUser(user.id!);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Reactivated "${user.fullName}"')),
+    );
+    await _refresh();
   }
 
   @override
@@ -86,12 +101,18 @@ class _StaffListScreenState extends State<StaffListScreen> {
         title: const Text('Staff'),
         actions: [
           IconButton(
-            onPressed: () => setState(() => _showDeactivated = !_showDeactivated),
-            icon: Icon(_showDeactivated ? Icons.visibility : Icons.visibility_off),
+            onPressed: () {
+              setState(() {
+                _showDeactivated = !_showDeactivated;
+                _future = _loadUsers();
+              });
+            },
+            icon: Icon(
+                _showDeactivated ? Icons.visibility : Icons.visibility_off),
             tooltip: _showDeactivated ? 'Hide deactivated' : 'Show deactivated',
           ),
           IconButton(
-            onPressed: _refresh,
+            onPressed: () => _refresh(),
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh',
           ),
@@ -112,18 +133,15 @@ class _StaffListScreenState extends State<StaffListScreen> {
             );
           }
           final users = snapshot.data ?? const <UserModel>[];
-          final visibleUsers = _showDeactivated
-              ? users
-              : users.where((u) => u.isActive).toList(growable: false);
-          if (visibleUsers.isEmpty) {
+          if (users.isEmpty) {
             return const Center(child: Text('No staff found.'));
           }
 
           return ListView.separated(
-            itemCount: visibleUsers.length,
+            itemCount: users.length,
             separatorBuilder: (_, __) => const Divider(height: 1),
             itemBuilder: (context, i) {
-              final u = visibleUsers[i];
+              final u = users[i];
               final subtitle = '${u.username} • ${u.role.name}';
               return ListTile(
                 leading: CircleAvatar(
@@ -143,29 +161,30 @@ class _StaffListScreenState extends State<StaffListScreen> {
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (u.isActive)
-                      IconButton(
-                        tooltip: 'Deactivate',
-                        onPressed: u.id == null ? null : () => _confirmDeactivate(u),
-                        icon: const Icon(Icons.person_off),
-                      )
-                    else
-                      const Tooltip(
-                        message: 'Deactivated',
-                        child: Icon(Icons.block, color: Colors.redAccent),
+                    IconButton(
+                      tooltip: u.isActive ? 'Deactivate' : 'Reactivate',
+                      onPressed: u.id == null
+                          ? null
+                          : () => u.isActive
+                              ? _confirmDeactivate(u)
+                              : _reactivate(u),
+                      icon: Icon(
+                        u.isActive ? Icons.person_off : Icons.restart_alt,
+                        color: u.isActive ? null : Colors.green,
                       ),
+                    ),
                     IconButton(
                       tooltip: 'Edit',
                       onPressed: u.id == null
                           ? null
                           : () async {
-                        await Navigator.pushNamed(
-                          context,
-                          AppRoutes.staffForm,
-                          arguments: StaffFormArgs(userId: u.id),
-                        );
-                        _refresh();
-                      },
+                              await Navigator.pushNamed(
+                                context,
+                                AppRoutes.staffForm,
+                                arguments: StaffFormArgs(userId: u.id),
+                              );
+                              await _refresh();
+                            },
                       icon: const Icon(Icons.edit),
                     ),
                   ],
@@ -173,13 +192,13 @@ class _StaffListScreenState extends State<StaffListScreen> {
                 onTap: u.id == null
                     ? null
                     : () async {
-                  await Navigator.pushNamed(
-                    context,
-                    AppRoutes.staffForm,
-                    arguments: StaffFormArgs(userId: u.id),
-                  );
-                  _refresh();
-                },
+                        await Navigator.pushNamed(
+                          context,
+                          AppRoutes.staffForm,
+                          arguments: StaffFormArgs(userId: u.id),
+                        );
+                        await _refresh();
+                      },
               );
             },
           );
@@ -192,7 +211,7 @@ class _StaffListScreenState extends State<StaffListScreen> {
             AppRoutes.staffForm,
             arguments: const StaffFormArgs(),
           );
-          _refresh();
+          await _refresh();
         },
         child: const Icon(Icons.person_add),
       ),
@@ -309,10 +328,24 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
     try {
       final now = DateTime.now().millisecondsSinceEpoch;
       final isEdit = _editingUserId != null;
+      final username = _usernameCtrl.text.trim();
+
+      if (!isEdit) {
+        final exists = await _repo.usernameExists(username);
+        if (exists) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Username already exists.')),
+            );
+            setState(() => _saving = false);
+          }
+          return;
+        }
+      }
 
       if (!isEdit) {
         final user = UserModel(
-          username: _usernameCtrl.text.trim(),
+          username: username,
           passwordHash: UserModel.hashPassword(_passwordCtrl.text),
           fullName: _fullNameCtrl.text.trim(),
           role: _role,
@@ -397,8 +430,9 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
                 decoration: InputDecoration(
                   labelText: 'Username',
                   border: const OutlineInputBorder(),
-                  helperText:
-                  isEdit ? 'Username cannot be changed.' : 'Must be unique.',
+                  helperText: isEdit
+                      ? 'Username cannot be changed.'
+                      : 'Must be unique.',
                 ),
                 validator: (v) => _required(v, 'Username'),
                 textInputAction: TextInputAction.next,
@@ -424,10 +458,10 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
                 items: StaffRole.values
                     .map(
                       (r) => DropdownMenuItem(
-                    value: r,
-                    child: Text(r.name),
-                  ),
-                )
+                        value: r,
+                        child: Text(r.name),
+                      ),
+                    )
                     .toList(),
                 onChanged: (v) => setState(() => _role = v ?? _role),
                 decoration: const InputDecoration(
@@ -447,10 +481,10 @@ class _StaffFormScreenState extends State<StaffFormScreen> {
                 onPressed: _save,
                 icon: _saving
                     ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
                     : const Icon(Icons.save),
                 label: Text(_saving ? 'Saving...' : 'Save'),
               ),

@@ -26,6 +26,9 @@ class InvoiceDetailArgs {
   const InvoiceDetailArgs({required this.bookingId});
 }
 
+bool _canManageStayOps(StaffRole? role) =>
+    role == StaffRole.admin || role == StaffRole.receptionist;
+
 class CheckInScreen extends StatefulWidget {
   const CheckInScreen({super.key});
 
@@ -51,16 +54,43 @@ class _CheckInScreenState extends State<CheckInScreen> {
     });
   }
 
+  Future<void> _handleRefresh() async {
+    _refresh();
+    try {
+      await _future;
+    } catch (_) {
+      // Ignore errors because RefreshIndicator already surfaces them via UI.
+    }
+  }
+
   Future<void> _doCheckIn(BookingModel booking) async {
     if (booking.id == null) return;
-    if (booking.roomId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Booking has no assigned room.')),
-      );
-      return;
-    }
+
     try {
-      await _stayService.checkIn(booking.id!, booking.roomId!);
+      final evaluation =
+          await _stayService.evaluateBookingForCheckIn(booking.id!);
+      if (!evaluation.canProceed) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text(evaluation.message ??
+                    'Booking not eligible for check-in.')),
+          );
+        }
+        return;
+      }
+
+      final roomId = booking.roomId;
+      if (roomId == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Booking has no assigned room.')),
+          );
+        }
+        return;
+      }
+
+      await _stayService.checkIn(booking.id!, roomId);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Checked in successfully.')),
@@ -77,7 +107,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
   @override
   Widget build(BuildContext context) {
     final session = context.watch<SessionProvider>();
-    if (session.role != StaffRole.admin && session.role != StaffRole.receptionist) {
+    if (!_canManageStayOps(session.role)) {
       return Scaffold(
         appBar: AppBar(title: const Text('Check-In')),
         body: const Center(
@@ -118,34 +148,51 @@ class _CheckInScreenState extends State<CheckInScreen> {
             );
           }
           final all = snapshot.data ?? const <BookingModel>[];
-          final bookings = all.where((b) => b.roomId != null).toList();
-          if (bookings.isEmpty) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(16),
-                child: Text(
-                  'No BOOKED bookings with assigned rooms.\nAssign a room first.',
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            );
-          }
-          return ListView.separated(
-            itemCount: bookings.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, i) {
-              final b = bookings[i];
-              final subtitle =
-                  'Room: ${b.roomId} • ${DateFormatter.formatDate(b.checkInDate)} → ${DateFormatter.formatDate(b.checkOutDate)}';
-              return ListTile(
-                title: Text(b.guestName),
-                subtitle: Text(subtitle),
-                trailing: FilledButton(
-                  onPressed: () => _doCheckIn(b),
-                  child: const Text('Check-in'),
-                ),
-              );
-            },
+          final ready =
+              all.where((b) => b.roomId != null).toList(growable: false);
+          final needsRoom =
+              all.where((b) => b.roomId == null).toList(growable: false);
+
+          return RefreshIndicator(
+            onRefresh: _handleRefresh,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                if (needsRoom.isNotEmpty)
+                  _InfoBanner(
+                    title: 'Waiting for room assignment',
+                    message:
+                        '${needsRoom.length} booking(s) still need a room before check-in.',
+                  ),
+                if (ready.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(
+                      child: Text(
+                        'No BOOKED bookings with assigned rooms yet.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  )
+                else
+                  ...ready.map(
+                    (b) => Card(
+                      margin: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      child: ListTile(
+                        title: Text(b.guestName),
+                        subtitle: Text(
+                          'Room: ${b.roomId}\n${DateFormatter.formatDate(b.checkInDate)} → ${DateFormatter.formatDate(b.checkOutDate)}',
+                        ),
+                        trailing: FilledButton(
+                          onPressed: () => _doCheckIn(b),
+                          child: const Text('Check-in'),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           );
         },
       ),
@@ -162,18 +209,27 @@ class SurchargeFormScreen extends StatefulWidget {
 
 class _SurchargeFormScreenState extends State<SurchargeFormScreen> {
   final _repo = SurchargeRepository();
+  final BookingRepository _bookingRepo = BookingRepository();
   final _formKey = GlobalKey<FormState>();
   final _descCtrl = TextEditingController();
   final _amountCtrl = TextEditingController();
   bool _saving = false;
   int? _bookingId;
+  BookingModel? _booking;
+  bool _loadingBooking = false;
+  bool _didInitArgs = false;
+  String? _bookingError;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_bookingId != null) return;
+    if (_didInitArgs) return;
+    _didInitArgs = true;
     final args = ModalRoute.of(context)?.settings.arguments;
     if (args is BookingIdArgs) _bookingId = args.bookingId;
+    if (_bookingId != null) {
+      _loadBooking();
+    }
   }
 
   @override
@@ -181,6 +237,25 @@ class _SurchargeFormScreenState extends State<SurchargeFormScreen> {
     _descCtrl.dispose();
     _amountCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadBooking() async {
+    final id = _bookingId;
+    if (id == null) return;
+    setState(() {
+      _loadingBooking = true;
+      _bookingError = null;
+    });
+    try {
+      final booking = await _bookingRepo.getBookingById(id);
+      if (!mounted) return;
+      setState(() => _booking = booking);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _bookingError = 'Failed to load booking: $e');
+    } finally {
+      if (mounted) setState(() => _loadingBooking = false);
+    }
   }
 
   Future<void> _save() async {
@@ -226,6 +301,22 @@ class _SurchargeFormScreenState extends State<SurchargeFormScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final role = context.watch<SessionProvider>().role;
+    if (!_canManageStayOps(role)) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Add Surcharge')),
+        body: const Center(
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Text('Only admin or reception can add surcharges.'),
+          ),
+        ),
+      );
+    }
+
+    final bookingHeader = _buildBookingHeader();
+    final canSubmit = !_saving && _bookingError == null && _bookingId != null;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Add Surcharge')),
       body: AbsorbPointer(
@@ -235,14 +326,26 @@ class _SurchargeFormScreenState extends State<SurchargeFormScreen> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              if (_loadingBooking) const LinearProgressIndicator(minHeight: 2),
+              if (bookingHeader != null) ...[
+                bookingHeader,
+                const SizedBox(height: 16),
+              ],
+              if (_bookingError != null)
+                _InfoBanner(
+                  title: 'Booking unavailable',
+                  message: _bookingError!,
+                  isError: true,
+                ),
               TextFormField(
                 controller: _descCtrl,
                 decoration: const InputDecoration(
                   labelText: 'Description',
                   border: OutlineInputBorder(),
                 ),
-                validator: (v) =>
-                (v == null || v.trim().isEmpty) ? 'Description is required' : null,
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? 'Description is required'
+                    : null,
               ),
               const SizedBox(height: 12),
               TextFormField(
@@ -251,24 +354,57 @@ class _SurchargeFormScreenState extends State<SurchargeFormScreen> {
                   labelText: 'Amount',
                   border: OutlineInputBorder(),
                 ),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                validator: (v) =>
-                (v == null || v.trim().isEmpty) ? 'Amount is required' : null,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? 'Amount is required'
+                    : null,
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: _save,
+                onPressed: canSubmit ? _save : null,
                 icon: _saving
                     ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
                     : const Icon(Icons.add),
                 label: Text(_saving ? 'Saving...' : 'Add surcharge'),
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget? _buildBookingHeader() {
+    if (_bookingId == null) {
+      return const _InfoBanner(
+        title: 'Missing booking',
+        message: 'This screen requires a booking context.',
+        isError: true,
+      );
+    }
+
+    final booking = _booking;
+    if (booking == null) {
+      return _bookingError == null
+          ? const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Text('Loading booking details...'),
+            )
+          : null;
+    }
+
+    return Card(
+      child: ListTile(
+        title: Text(booking.guestName),
+        subtitle: Text(
+          'Booking #${booking.id ?? '-'} - Room: ${booking.roomId ?? '-'}\n'
+          '${DateFormatter.formatDate(booking.checkInDate)} → '
+          '${DateFormatter.formatDate(booking.checkOutDate)}',
         ),
       ),
     );
@@ -284,7 +420,6 @@ class CheckoutScreen extends StatefulWidget {
 
 class _CheckoutScreenState extends State<CheckoutScreen> {
   final _bookingRepo = BookingRepository();
-  final _surchargeRepo = SurchargeRepository();
   final _stayService = StayService();
 
   late Future<List<BookingModel>> _future;
@@ -301,13 +436,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     });
   }
 
+  Future<void> _handleRefresh() async {
+    _refresh();
+    try {
+      await _future;
+    } catch (_) {}
+  }
+
   Future<void> _openSurchargeForm(int bookingId) async {
     final result = await Navigator.pushNamed(
       context,
       AppRoutes.surchargeForm,
       arguments: BookingIdArgs(bookingId: bookingId),
     );
-    if (result == true) _refresh();
+    if (result == true) await _handleRefresh();
   }
 
   Future<void> _confirmCheckout(BookingModel booking) async {
@@ -318,36 +460,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
 
-    final surchargeTotal = await _surchargeRepo.getTotalSurcharge(booking.id!);
-    final nights = DateFormatter.calculateNights(booking.checkInDate, booking.checkOutDate);
-    final roomCharge = nights * booking.bookedPricePerNight;
-    final total = roomCharge + surchargeTotal;
+    final quote = await _stayService.buildCheckoutQuote(booking);
 
     if (!mounted) return;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Confirm checkout'),
-        content: Text(
-          'Guest: ${booking.guestName}\n'
-              'Room: ${booking.roomId}\n'
-              'Nights: $nights\n'
-              'Room charge: $roomCharge\n'
-              'Surcharges: $surchargeTotal\n'
-              'Total: $total',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Checkout'),
-          ),
-        ],
-      ),
-    );
+    final ok = await _showCheckoutDialog(booking, quote);
     if (ok != true) return;
 
     if (!mounted) return;
@@ -355,7 +471,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final currentUserId = session.currentUser?.id;
     if (currentUserId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Missing session user. Please login again.')),
+        const SnackBar(
+            content: Text('Missing session user. Please login again.')),
       );
       return;
     }
@@ -368,6 +485,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         checkOutMs: booking.checkOutDate,
         bookedPricePerNight: booking.bookedPricePerNight,
         currentUserId: currentUserId,
+        quote: quote,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -390,7 +508,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   @override
   Widget build(BuildContext context) {
     final session = context.watch<SessionProvider>();
-    if (session.role != StaffRole.admin && session.role != StaffRole.receptionist) {
+    if (!_canManageStayOps(session.role)) {
       return Scaffold(
         appBar: AppBar(title: const Text('Check-Out')),
         body: const Center(
@@ -426,42 +544,107 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text('Failed to load checked-in bookings.\n${snapshot.error}'),
+                child: Text(
+                    'Failed to load checked-in bookings.\n${snapshot.error}'),
               ),
             );
           }
           final bookings = snapshot.data ?? const <BookingModel>[];
-          if (bookings.isEmpty) {
-            return const Center(child: Text('No CHECKED_IN bookings.'));
-          }
-          return ListView.separated(
-            itemCount: bookings.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, i) {
-              final b = bookings[i];
-              final subtitle =
-                  'Room: ${b.roomId ?? '-'} • ${DateFormatter.formatDate(b.checkInDate)} → ${DateFormatter.formatDate(b.checkOutDate)}';
-              return ListTile(
-                title: Text(b.guestName),
-                subtitle: Text(subtitle),
-                trailing: Wrap(
-                  spacing: 8,
-                  children: [
-                    OutlinedButton(
-                      onPressed: b.id == null ? null : () => _openSurchargeForm(b.id!),
-                      child: const Text('Surcharge'),
-                    ),
-                    FilledButton(
-                      onPressed: () => _confirmCheckout(b),
-                      child: const Text('Checkout'),
-                    ),
-                  ],
-                ),
-              );
-            },
+          return RefreshIndicator(
+            onRefresh: _handleRefresh,
+            child: bookings.isEmpty
+                ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: const [
+                      SizedBox(height: 48),
+                      Center(child: Text('No CHECKED_IN bookings right now.')),
+                    ],
+                  )
+                : ListView.separated(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    itemCount: bookings.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, i) {
+                      final b = bookings[i];
+                      final subtitle =
+                          'Room: ${b.roomId ?? '-'} • ${DateFormatter.formatDate(b.checkInDate)} → ${DateFormatter.formatDate(b.checkOutDate)}';
+                      return ListTile(
+                        title: Text(b.guestName),
+                        subtitle: Text(subtitle),
+                        trailing: Wrap(
+                          spacing: 8,
+                          children: [
+                            OutlinedButton(
+                              onPressed: b.id == null
+                                  ? null
+                                  : () => _openSurchargeForm(b.id!),
+                              child: const Text('Surcharge'),
+                            ),
+                            FilledButton(
+                              onPressed: () => _confirmCheckout(b),
+                              child: const Text('Checkout'),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
           );
         },
       ),
+    );
+  }
+
+  Future<bool?> _showCheckoutDialog(BookingModel booking, CheckoutQuote quote) {
+    return showDialog<bool>(
+      context: context,
+      builder: (_) {
+        bool cashReceived = false;
+        return StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: const Text('Confirm checkout'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Guest: ${booking.guestName}'),
+                  Text('Room: ${booking.roomId ?? '-'}'),
+                  Text('Nights: ${quote.nights}'),
+                  const SizedBox(height: 8),
+                  Text('Room charge: ${quote.roomCharge.toStringAsFixed(2)}'),
+                  Text(
+                      'Surcharges: ${quote.surchargeTotal.toStringAsFixed(2)}'),
+                  const Divider(height: 20),
+                  Text(
+                    'Total: ${quote.total.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                  const SizedBox(height: 12),
+                  CheckboxListTile(
+                    value: cashReceived,
+                    onChanged: (v) => setState(() => cashReceived = v ?? false),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Cash payment received'),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed:
+                    cashReceived ? () => Navigator.pop(context, true) : null,
+                child: const Text('Checkout'),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -491,75 +674,136 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final role = context.watch<SessionProvider>().role;
+    if (!_canManageStayOps(role)) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Invoice')),
+        body: const Center(
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Text('Only admin or reception can view invoices.'),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(title: const Text('Invoice')),
       body: _future == null
           ? const Center(child: Text('Missing invoice context.'))
           : FutureBuilder<InvoiceModel?>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text('Failed to load invoice.\n${snapshot.error}'),
-              ),
-            );
-          }
-          final invoice = snapshot.data;
-          if (invoice == null) {
-            return const Center(child: Text('Invoice not found.'));
-          }
+              future: _future,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text('Failed to load invoice.\n${snapshot.error}'),
+                    ),
+                  );
+                }
+                final invoice = snapshot.data;
+                if (invoice == null) {
+                  return const Center(child: Text('Invoice not found.'));
+                }
 
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Card(
-                child: ListTile(
-                  title: const Text('Booking'),
-                  subtitle: Text('#${invoice.bookingId}'),
-                ),
-              ),
+                return ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    Card(
+                      child: ListTile(
+                        title: const Text('Booking'),
+                        subtitle: Text('#${invoice.bookingId}'),
+                      ),
+                    ),
+                    const Card(
+                      child: ListTile(
+                        title: Text('Payment method'),
+                        subtitle: Text('Cash'),
+                      ),
+                    ),
                     Card(
                       child: ListTile(
                         title: const Text('Issued by (User ID)'),
                         subtitle: Text('${invoice.issuedBy}'),
                       ),
                     ),
-              Card(
-                child: ListTile(
-                  title: const Text('Issued at'),
-                  subtitle: Text(DateFormatter.formatDateTime(invoice.issuedAt)),
-                ),
-              ),
-              Card(
-                child: ListTile(
-                  title: const Text('Room charge'),
-                  trailing: Text(invoice.roomCharge.toStringAsFixed(2)),
-                ),
-              ),
-              Card(
-                child: ListTile(
-                  title: const Text('Surcharges'),
-                  trailing: Text(invoice.surchargeTotal.toStringAsFixed(2)),
-                ),
-              ),
-              Card(
-                color: Theme.of(context).colorScheme.primaryContainer,
-                child: ListTile(
-                  title: const Text('Total'),
-                  trailing: Text(
-                    invoice.totalAmount.toStringAsFixed(2),
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
+                    Card(
+                      child: ListTile(
+                        title: const Text('Issued at'),
+                        subtitle: Text(
+                            DateFormatter.formatDateTime(invoice.issuedAt)),
+                      ),
+                    ),
+                    Card(
+                      child: ListTile(
+                        title: const Text('Room charge'),
+                        trailing: Text(invoice.roomCharge.toStringAsFixed(2)),
+                      ),
+                    ),
+                    Card(
+                      child: ListTile(
+                        title: const Text('Surcharges'),
+                        trailing:
+                            Text(invoice.surchargeTotal.toStringAsFixed(2)),
+                      ),
+                    ),
+                    Card(
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      child: ListTile(
+                        title: const Text('Total'),
+                        trailing: Text(
+                          invoice.totalAmount.toStringAsFixed(2),
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+    );
+  }
+}
+
+class _InfoBanner extends StatelessWidget {
+  final String title;
+  final String message;
+  final bool isError;
+
+  const _InfoBanner({
+    required this.title,
+    required this.message,
+    this.isError = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final bgColor =
+        isError ? colorScheme.errorContainer : colorScheme.secondaryContainer;
+    final textColor = isError
+        ? colorScheme.onErrorContainer
+        : colorScheme.onSecondaryContainer;
+
+    return Card(
+      color: bgColor,
+      margin: const EdgeInsets.all(16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title,
+                style:
+                    TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Text(message, style: TextStyle(color: textColor)),
+          ],
+        ),
       ),
     );
   }

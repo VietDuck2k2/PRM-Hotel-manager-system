@@ -53,6 +53,44 @@ class RoomStatusBadge extends StatelessWidget {
 bool _isAdmin(StaffRole? role) => role == StaffRole.admin;
 bool _isHousekeeping(StaffRole? role) => role == StaffRole.housekeeping;
 
+enum RoomListFilter { all, available, occupied, dirty, outOfService }
+
+RoomStatus? _statusForFilter(RoomListFilter filter) {
+  switch (filter) {
+    case RoomListFilter.all:
+      return null;
+    case RoomListFilter.available:
+      return RoomStatus.available;
+    case RoomListFilter.occupied:
+      return RoomStatus.occupied;
+    case RoomListFilter.dirty:
+      return RoomStatus.dirty;
+    case RoomListFilter.outOfService:
+      return RoomStatus.outOfService;
+  }
+}
+
+String _filterLabel(RoomListFilter filter) {
+  switch (filter) {
+    case RoomListFilter.all:
+      return 'All';
+    case RoomListFilter.available:
+      return 'Available';
+    case RoomListFilter.occupied:
+      return 'Occupied';
+    case RoomListFilter.dirty:
+      return 'Dirty';
+    case RoomListFilter.outOfService:
+      return 'Out of service';
+  }
+}
+
+Map<RoomStatus, int> _initialStatusCounts() {
+  return {
+    for (final status in RoomStatus.values) status: 0,
+  };
+}
+
 class RoomTypeListScreen extends StatefulWidget {
   const RoomTypeListScreen({super.key});
 
@@ -63,19 +101,49 @@ class RoomTypeListScreen extends StatefulWidget {
 class _RoomTypeListScreenState extends State<RoomTypeListScreen> {
   final RoomTypeRepository _roomTypeRepository = RoomTypeRepository();
 
-  late Future<List<RoomTypeModel>> _roomTypesFuture;
+  bool _loading = false;
+  bool _initialLoadDone = false;
+  List<RoomTypeModel> _roomTypes = [];
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _roomTypesFuture = _roomTypeRepository.getAllRoomTypes();
+    _load();
   }
 
-  void _refresh() {
-    setState(() {
-      _roomTypesFuture = _roomTypeRepository.getAllRoomTypes();
-    });
+  Future<void> _load() async {
+    if (!_initialLoadDone && mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
+    try {
+      final list = await _roomTypeRepository.getAllRoomTypes();
+      if (!mounted) return;
+      setState(() {
+        _roomTypes = list;
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Failed to load room types: $e';
+        _roomTypes = [];
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _initialLoadDone = true;
+        });
+      }
+    }
   }
+
+  Future<void> _refresh() => _load();
 
   @override
   Widget build(BuildContext context) {
@@ -96,51 +164,85 @@ class _RoomTypeListScreenState extends State<RoomTypeListScreen> {
           ? FloatingActionButton(
               onPressed: () async {
                 await Navigator.pushNamed(context, AppRoutes.roomTypeForm);
-                _refresh();
+                await _refresh();
               },
               child: const Icon(Icons.add),
             )
           : null,
-      body: FutureBuilder<List<RoomTypeModel>>(
-        future: _roomTypesFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(child: Text('Failed to load room types: ${snapshot.error}'));
-          }
-          final roomTypes = snapshot.data ?? [];
+      body: _loading && !_initialLoadDone
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _refresh,
+              child: _buildRoomTypeBody(canEdit),
+            ),
+    );
+  }
 
-          if (roomTypes.isEmpty) {
-            return const Center(child: Text('No room types found'));
-          }
+  Widget _buildRoomTypeBody(bool canEdit) {
+    if (_error != null) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(24),
+        children: [
+          Text(_error!, style: Theme.of(context).textTheme.bodyLarge),
+          const SizedBox(height: 12),
+          FilledButton(onPressed: _load, child: const Text('Retry')),
+        ],
+      );
+    }
 
-          return ListView.builder(
-            itemCount: roomTypes.length,
-            itemBuilder: (context, i) {
-              final type = roomTypes[i];
-              final priceText = type.pricePerNight.toStringAsFixed(2);
-              return ListTile(
-                title: Text(type.name),
-                subtitle: Text('Price/night: $priceText${type.description != null && type.description!.isNotEmpty ? '\n${type.description}' : ''}'),
-                trailing: canEdit ? const Icon(Icons.chevron_right) : null,
-                enabled: canEdit,
-                onTap: canEdit
-                    ? () async {
-                        await Navigator.pushNamed(
-                          context,
-                          AppRoutes.roomTypeForm,
-                          arguments: {'roomTypeId': type.id},
-                        );
-                        _refresh();
-                      }
-                    : null,
-              );
-            },
-          );
-        },
-      ),
+    if (_roomTypes.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(24),
+        children: const [
+          Icon(Icons.meeting_room, size: 56, color: Colors.grey),
+          SizedBox(height: 12),
+          Text('No room types found'),
+        ],
+      );
+    }
+
+    return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
+      itemCount: _roomTypes.length,
+      itemBuilder: (context, i) {
+        final type = _roomTypes[i];
+        final priceText = type.pricePerNight.toStringAsFixed(2);
+        final description = type.description;
+        return Card(
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          child: ListTile(
+            title: Text(type.name),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Price/night: $priceText'),
+                if (description != null && description.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      description,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+              ],
+            ),
+            trailing: canEdit ? const Icon(Icons.chevron_right) : null,
+            enabled: canEdit,
+            onTap: canEdit
+                ? () async {
+                    await Navigator.pushNamed(
+                      context,
+                      AppRoutes.roomTypeForm,
+                      arguments: {'roomTypeId': type.id},
+                    );
+                    await _refresh();
+                  }
+                : null,
+          ),
+        );
+      },
     );
   }
 }
@@ -258,7 +360,8 @@ class _RoomTypeFormScreenState extends State<RoomTypeFormScreen> {
     if (!mounted) return;
     if (hasLinkedRooms) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot delete: room type is linked to rooms')),
+        const SnackBar(
+            content: Text('Cannot delete: room type is linked to rooms')),
       );
       return;
     }
@@ -368,7 +471,8 @@ class _RoomTypeFormScreenState extends State<RoomTypeFormScreen> {
                         labelText: 'Price per night',
                         hintText: 'e.g., 120000',
                       ),
-                      keyboardType: TextInputType.numberWithOptions(decimal: true),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
                       validator: (v) {
                         final text = (v ?? '').trim();
                         final price = double.tryParse(text);
@@ -388,7 +492,8 @@ class _RoomTypeFormScreenState extends State<RoomTypeFormScreen> {
                     const SizedBox(height: 24),
                     ElevatedButton(
                       onPressed: _save,
-                      child: Text(_isEdit ? 'Save changes' : 'Create room type'),
+                      child:
+                          Text(_isEdit ? 'Save changes' : 'Create room type'),
                     ),
                   ],
                 ),
@@ -409,9 +514,13 @@ class _RoomListScreenState extends State<RoomListScreen> {
   final RoomRepository _roomRepository = RoomRepository();
   final RoomTypeRepository _roomTypeRepository = RoomTypeRepository();
 
-  bool _loading = true;
+  bool _loading = false;
+  bool _initialLoadDone = false;
+  String? _error;
+  RoomListFilter _filter = RoomListFilter.all;
   List<RoomModel> _rooms = [];
   List<RoomTypeModel> _roomTypes = [];
+  Map<RoomStatus, int> _statusCounts = _initialStatusCounts();
 
   @override
   void initState() {
@@ -420,17 +529,58 @@ class _RoomListScreenState extends State<RoomListScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
-    final rooms = await _roomRepository.getAllRooms();
-    final types = await _roomTypeRepository.getAllRoomTypes();
-    setState(() {
-      _rooms = rooms;
-      _roomTypes = types;
-      _loading = false;
-    });
+    if (!_initialLoadDone && mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
+    try {
+      final rooms = await _roomRepository.getAllRooms();
+      final types = await _roomTypeRepository.getAllRoomTypes();
+      final counts = await _roomRepository.getRoomStatusCounts();
+      if (!mounted) return;
+      setState(() {
+        _rooms = rooms;
+        _roomTypes = types;
+        _statusCounts = counts;
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Failed to load rooms: $e';
+        _rooms = [];
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _initialLoadDone = true;
+        });
+      }
+    }
   }
 
   Future<void> _refresh() => _load();
+
+  Map<int, RoomTypeModel> get _roomTypeById {
+    final map = <int, RoomTypeModel>{};
+    for (final type in _roomTypes) {
+      final id = type.id;
+      if (id != null) {
+        map[id] = type;
+      }
+    }
+    return map;
+  }
+
+  List<RoomModel> get _filteredRooms {
+    final status = _statusForFilter(_filter);
+    if (status == null) return _rooms;
+    return _rooms.where((room) => room.status == status).toList();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -444,57 +594,169 @@ class _RoomListScreenState extends State<RoomListScreen> {
 
     final canEdit = _isAdmin(role);
 
-    final typeById = <int, RoomTypeModel>{};
-    for (final t in _roomTypes) {
-      if (t.id != null) typeById[t.id!] = t;
-    }
-
     return Scaffold(
       appBar: AppBar(title: const Text('Rooms')),
       floatingActionButton: canEdit
           ? FloatingActionButton(
               onPressed: () async {
-                await Navigator.pushNamed(context, AppRoutes.roomForm);
-                await _refresh();
+                await _openForm();
               },
               child: const Icon(Icons.add),
             )
           : null,
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _rooms.isEmpty
-              ? const Center(child: Text('No rooms found'))
-              : ListView.builder(
-                  itemCount: _rooms.length,
-                  itemBuilder: (context, i) {
-                    final room = _rooms[i];
-                    final roomTypeName = typeById[room.roomTypeId]?.name;
-                    return Card(
-                      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                      child: ListTile(
-                        title: Text('Room ${room.roomNumber}'),
-                        subtitle: Text(
-                          roomTypeName != null
-                              ? 'Type: $roomTypeName'
-                              : 'Room type ID: ${room.roomTypeId}',
-                        ),
-                        trailing: RoomStatusBadge(status: room.status),
-                        enabled: canEdit,
-                        onTap: canEdit
-                            ? () async {
-                                await Navigator.pushNamed(
-                                  context,
-                                  AppRoutes.roomForm,
-                                  arguments: {'roomId': room.id},
-                                );
-                                await _refresh();
-                              }
-                            : null,
-                      ),
-                    );
-                  },
-                ),
+      body: _buildBody(canEdit),
     );
+  }
+
+  Widget _buildBody(bool canEdit) {
+    if (_loading && !_initialLoadDone) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return RefreshIndicator(
+      onRefresh: _refresh,
+      child: _error != null ? _buildErrorState() : _buildRoomList(canEdit),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(24),
+      children: [
+        Text(_error!, style: Theme.of(context).textTheme.bodyLarge),
+        const SizedBox(height: 12),
+        FilledButton(onPressed: _load, child: const Text('Retry')),
+      ],
+    );
+  }
+
+  Widget _buildRoomList(bool canEdit) {
+    final rooms = _filteredRooms;
+    final children = <Widget>[
+      const SizedBox(height: 12),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: _RoomStatusSummary(counts: _statusCounts),
+      ),
+      const SizedBox(height: 8),
+      _RoomFilterChips(
+        selected: _filter,
+        onSelected: (filter) => setState(() => _filter = filter),
+      ),
+      const SizedBox(height: 8),
+    ];
+
+    if (rooms.isEmpty) {
+      children.add(const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 48),
+        child: Center(
+          child: Text('No rooms match this filter yet.'),
+        ),
+      ));
+    } else {
+      final typeById = _roomTypeById;
+      children.addAll(
+        rooms.map(
+          (room) => Card(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: ListTile(
+              title: Text('Room ${room.roomNumber}'),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    typeById[room.roomTypeId]?.name != null
+                        ? 'Type: ${typeById[room.roomTypeId]!.name}'
+                        : 'Room type ID: ${room.roomTypeId}',
+                  ),
+                  if (room.notes != null && room.notes!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        room.notes!,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                ],
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  RoomStatusBadge(status: room.status),
+                  IconButton(
+                    tooltip: 'View details',
+                    icon: const Icon(Icons.info_outline),
+                    onPressed: () => _showRoomDetails(room),
+                  ),
+                ],
+              ),
+              onTap: canEdit ? () => _openForm(roomId: room.id) : null,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: children,
+    );
+  }
+
+  Future<void> _openForm({int? roomId}) async {
+    await Navigator.pushNamed(
+      context,
+      AppRoutes.roomForm,
+      arguments: roomId == null ? null : {'roomId': roomId},
+    );
+    await _refresh();
+  }
+
+  Future<void> _showRoomDetails(RoomModel room) async {
+    final type = _roomTypeById[room.roomTypeId];
+    final role = context.read<SessionProvider>().role;
+    final canEdit = _isAdmin(role);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => _RoomDetailSheet(
+        room: room,
+        roomType: type,
+        canEdit: canEdit,
+        onEdit: room.id == null ? null : () => _openForm(roomId: room.id),
+        onChangeStatus: room.id == null || !canEdit
+            ? null
+            : (status) => _changeStatus(room, status),
+      ),
+    );
+  }
+
+  Future<void> _changeStatus(RoomModel room, RoomStatus newStatus) async {
+    if (room.id == null) return;
+    if (room.status == newStatus) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Room is already in this status')),
+      );
+      return;
+    }
+
+    try {
+      await _roomRepository.updateStatus(room.id!, newStatus);
+      if (!mounted) return;
+      final label = newStatus.toDbString().replaceAll('_', ' ');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Room ${room.roomNumber} marked $label')),
+      );
+      await _refresh();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update status: $e')),
+      );
+    }
   }
 }
 
@@ -503,6 +765,189 @@ class RoomFormScreen extends StatefulWidget {
 
   @override
   State<RoomFormScreen> createState() => _RoomFormScreenState();
+}
+
+class _RoomFilterChips extends StatelessWidget {
+  final RoomListFilter selected;
+  final ValueChanged<RoomListFilter> onSelected;
+
+  const _RoomFilterChips({
+    required this.selected,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(
+        children: RoomListFilter.values
+            .map(
+              (filter) => Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: ChoiceChip(
+                  label: Text(_filterLabel(filter)),
+                  selected: selected == filter,
+                  onSelected: (_) => onSelected(filter),
+                ),
+              ),
+            )
+            .toList(),
+      ),
+    );
+  }
+}
+
+class _RoomStatusSummary extends StatelessWidget {
+  final Map<RoomStatus, int> counts;
+
+  const _RoomStatusSummary({required this.counts});
+
+  @override
+  Widget build(BuildContext context) {
+    final tiles = [
+      _StatusChipData(
+          'Available', counts[RoomStatus.available] ?? 0, Colors.green),
+      _StatusChipData(
+          'Occupied', counts[RoomStatus.occupied] ?? 0, Colors.orange),
+      _StatusChipData('Dirty', counts[RoomStatus.dirty] ?? 0, Colors.red),
+      _StatusChipData(
+          'Out of service', counts[RoomStatus.outOfService] ?? 0, Colors.grey),
+    ];
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: tiles
+          .map(
+            (tile) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: tile.color.withValues(alpha: 31),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text('${tile.label}: ${tile.count}'),
+            ),
+          )
+          .toList(),
+    );
+  }
+}
+
+class _StatusChipData {
+  final String label;
+  final int count;
+  final Color color;
+
+  const _StatusChipData(this.label, this.count, this.color);
+}
+
+class _RoomDetailSheet extends StatelessWidget {
+  final RoomModel room;
+  final RoomTypeModel? roomType;
+  final bool canEdit;
+  final Future<void> Function()? onEdit;
+  final Future<void> Function(RoomStatus status)? onChangeStatus;
+
+  const _RoomDetailSheet({
+    required this.room,
+    required this.roomType,
+    required this.canEdit,
+    this.onEdit,
+    this.onChangeStatus,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Room ${room.roomNumber}',
+                          style: theme.textTheme.titleLarge),
+                      const SizedBox(height: 4),
+                      Text(
+                        roomType?.name ?? 'Room type ID: ${room.roomTypeId}',
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    ],
+                  ),
+                ),
+                RoomStatusBadge(status: room.status),
+              ],
+            ),
+            if (room.notes != null && room.notes!.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text('Notes', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 4),
+              Text(room.notes!),
+            ],
+            const SizedBox(height: 16),
+            if (canEdit && onEdit != null)
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.tonal(
+                  onPressed: () => _handleEdit(context),
+                  child: const Text('Edit room details'),
+                ),
+              ),
+            if (onChangeStatus != null) ...[
+              const SizedBox(height: 12),
+              Text('Status actions', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _buildStatusButton(
+                      context, RoomStatus.available, 'Mark available'),
+                  _buildStatusButton(context, RoomStatus.dirty, 'Mark dirty'),
+                  _buildStatusButton(
+                      context, RoomStatus.outOfService, 'Mark out of service'),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusButton(
+      BuildContext context, RoomStatus status, String label) {
+    return OutlinedButton(
+      onPressed: room.status == status
+          ? null
+          : () => _handleStatusChange(context, status),
+      child: Text(label),
+    );
+  }
+
+  Future<void> _handleEdit(BuildContext context) async {
+    if (onEdit == null) return;
+    Navigator.pop(context);
+    await onEdit!.call();
+  }
+
+  Future<void> _handleStatusChange(
+      BuildContext context, RoomStatus status) async {
+    if (onChangeStatus == null) return;
+    Navigator.pop(context);
+    await onChangeStatus!.call(status);
+  }
 }
 
 class _RoomFormScreenState extends State<RoomFormScreen> {
@@ -544,9 +989,11 @@ class _RoomFormScreenState extends State<RoomFormScreen> {
     setState(() => _loading = true);
 
     final types = await _roomTypeRepository.getAllRoomTypes();
-    final existing = _isEdit ? await _roomRepository.getRoomById(_roomId!) : null;
+    final existing =
+        _isEdit ? await _roomRepository.getRoomById(_roomId!) : null;
 
-    final selectedTypeId = existing?.roomTypeId ?? (types.isNotEmpty ? types.first.id : null);
+    final selectedTypeId =
+        existing?.roomTypeId ?? (types.isNotEmpty ? types.first.id : null);
 
     setState(() {
       _roomTypes = types;

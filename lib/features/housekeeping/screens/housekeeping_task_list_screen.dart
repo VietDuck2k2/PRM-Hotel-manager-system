@@ -19,7 +19,10 @@ class _HousekeepingTaskListScreenState
   final RoomRepository _roomRepository = RoomRepository();
 
   bool _loading = true;
+  bool _initialLoadDone = false;
   List<RoomModel> _dirtyRooms = [];
+  String? _error;
+  final Set<int> _processingRooms = <int>{};
 
   @override
   void initState() {
@@ -28,27 +31,66 @@ class _HousekeepingTaskListScreenState
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
-    final rooms = await _roomRepository.getRoomsByStatus(RoomStatus.dirty);
-    setState(() {
-      _dirtyRooms = rooms;
-      _loading = false;
-    });
+    if (!_initialLoadDone && mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
+    try {
+      final rooms = await _roomRepository.getRoomsNeedingCleaning();
+      if (!mounted) return;
+      setState(() {
+        _dirtyRooms = rooms;
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Failed to load cleaning tasks: $e';
+        _dirtyRooms = [];
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _initialLoadDone = true;
+        });
+      }
+    }
   }
 
+  Future<void> _refresh() => _load();
+
   Future<void> _markClean(int roomId) async {
+    setState(() {
+      _processingRooms.add(roomId);
+    });
     try {
-      await _roomRepository.markRoomAvailable(roomId);
+      final updated = await _roomRepository.markRoomAvailable(roomId);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Room marked as AVAILABLE')),
-      );
+      if (updated == 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Room is already marked clean')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Room marked as AVAILABLE')),
+        );
+      }
       await _load();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to mark clean: $e')),
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _processingRooms.remove(roomId);
+        });
+      }
     }
   }
 
@@ -77,28 +119,77 @@ class _HousekeepingTaskListScreenState
 
     return Scaffold(
       appBar: AppBar(title: const Text('Cleaning Tasks')),
-      body: _loading
+      body: _loading && !_initialLoadDone
           ? const Center(child: CircularProgressIndicator())
-          : _dirtyRooms.isEmpty
-              ? const Center(child: Text('No dirty rooms right now'))
-              : ListView.builder(
-                  itemCount: _dirtyRooms.length,
-                  itemBuilder: (context, i) {
-                    final room = _dirtyRooms[i];
-                    final roomId = room.id;
-                    return Card(
-                      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                      child: ListTile(
-                        title: Text('Room ${room.roomNumber}'),
-                        subtitle: Text('Status: ${room.status.toDbString()}'),
-                        trailing: ElevatedButton(
-                          onPressed: roomId == null ? null : () => _markClean(roomId),
-                          child: const Text('Mark Clean'),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+          : RefreshIndicator(
+              onRefresh: _refresh,
+              child: _buildBody(),
+            ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_error != null) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(24),
+        children: [
+          Text(
+            _error!,
+            style: Theme.of(context).textTheme.bodyLarge,
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: _load,
+            child: const Text('Retry'),
+          ),
+        ],
+      );
+    }
+
+    if (_dirtyRooms.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(24),
+        children: const [
+          Icon(Icons.check_circle_outline, size: 64, color: Colors.green),
+          SizedBox(height: 12),
+          Text(
+            'No dirty rooms right now',
+            textAlign: TextAlign.center,
+          ),
+        ],
+      );
+    }
+
+    return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
+      itemCount: _dirtyRooms.length,
+      itemBuilder: (context, i) {
+        final room = _dirtyRooms[i];
+        final roomId = room.id;
+        final isProcessing =
+            roomId != null && _processingRooms.contains(roomId);
+        return Card(
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          child: ListTile(
+            title: Text('Room ${room.roomNumber}'),
+            subtitle: Text('Status: ${room.status.toDbString()}'),
+            trailing: roomId == null
+                ? const SizedBox()
+                : FilledButton(
+                    onPressed: isProcessing ? null : () => _markClean(roomId),
+                    child: isProcessing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Mark clean'),
+                  ),
+          ),
+        );
+      },
     );
   }
 }

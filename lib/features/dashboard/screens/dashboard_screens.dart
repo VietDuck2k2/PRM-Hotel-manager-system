@@ -11,9 +11,9 @@ class AdminDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _DashboardGrid(
+    return const _DashboardGrid(
       title: 'Admin Dashboard',
-      tiles: const [
+      tiles: [
         _DashboardTileData(
             icon: Icons.people, label: 'Staff', route: AppRoutes.staffList),
         _DashboardTileData(
@@ -43,9 +43,9 @@ class ReceptionistDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _DashboardGrid(
+    return const _DashboardGrid(
       title: 'Receptionist Dashboard',
-      tiles: const [
+      tiles: [
         _DashboardTileData(
             icon: Icons.book_online,
             label: 'Bookings',
@@ -69,9 +69,9 @@ class HousekeepingDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _DashboardGrid(
+    return const _DashboardGrid(
       title: 'Housekeeping',
-      tiles: const [
+      tiles: [
         _DashboardTileData(
           icon: Icons.cleaning_services,
           label: 'Cleaning Tasks',
