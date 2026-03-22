@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../auth/session_provider.dart';
 import '../../../core/constants/app_routes.dart';
+import '../../housekeeping/screens/housekeeping_task_list_screen.dart';
 
 /// Dashboard for admin role.
 /// Links to shell tiles only — downstream screens live in other modules.
@@ -69,16 +70,7 @@ class HousekeepingDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const _DashboardGrid(
-      title: 'Housekeeping',
-      tiles: [
-        _DashboardTileData(
-          icon: Icons.cleaning_services,
-          label: 'Cleaning Tasks',
-          route: AppRoutes.housekeepingTaskList,
-        ),
-      ],
-    );
+    return const HousekeepingTaskListScreen();
   }
 }
 

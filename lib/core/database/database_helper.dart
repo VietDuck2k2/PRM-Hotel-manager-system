@@ -30,6 +30,7 @@ class DatabaseHelper {
       path,
       version: DbSchema.dbVersion,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
@@ -40,6 +41,19 @@ class DatabaseHelper {
     }
     // Insert seed data for demo
     await _seedData(db);
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2 && newVersion >= 2) {
+      await _migrateToV2(db);
+    }
+  }
+
+  Future<void> _migrateToV2(Database db) async {
+    await db.execute(
+      'ALTER TABLE ${DbSchema.tableRooms} ADD COLUMN checkoutSinceLastFloorClean INTEGER NOT NULL DEFAULT 0',
+    );
+    await db.execute(DbSchema.createHousekeepingTasks);
   }
 
   /// Inserts demo data so the app works on first launch without manual setup.
@@ -75,34 +89,40 @@ class DatabaseHelper {
     }
 
     // Seed users — one per role
-    await db.insert(DbSchema.tableUsers, UserModel(
-      id: null,
-      username: 'admin',
-      passwordHash: UserModel.hashPassword('admin123'),
-      fullName: 'Admin User',
-      role: StaffRole.admin,
-      isActive: true,
-      createdAt: now,
-    ).toMap());
+    await db.insert(
+        DbSchema.tableUsers,
+        UserModel(
+          id: null,
+          username: 'admin',
+          passwordHash: UserModel.hashPassword('admin123'),
+          fullName: 'Admin User',
+          role: StaffRole.admin,
+          isActive: true,
+          createdAt: now,
+        ).toMap());
 
-    await db.insert(DbSchema.tableUsers, UserModel(
-      id: null,
-      username: 'receptionist',
-      passwordHash: UserModel.hashPassword('recep123'),
-      fullName: 'Receptionist User',
-      role: StaffRole.receptionist,
-      isActive: true,
-      createdAt: now,
-    ).toMap());
+    await db.insert(
+        DbSchema.tableUsers,
+        UserModel(
+          id: null,
+          username: 'receptionist',
+          passwordHash: UserModel.hashPassword('recep123'),
+          fullName: 'Receptionist User',
+          role: StaffRole.receptionist,
+          isActive: true,
+          createdAt: now,
+        ).toMap());
 
-    await db.insert(DbSchema.tableUsers, UserModel(
-      id: null,
-      username: 'housekeeping',
-      passwordHash: UserModel.hashPassword('house123'),
-      fullName: 'Housekeeping User',
-      role: StaffRole.housekeeping,
-      isActive: true,
-      createdAt: now,
-    ).toMap());
+    await db.insert(
+        DbSchema.tableUsers,
+        UserModel(
+          id: null,
+          username: 'housekeeping',
+          passwordHash: UserModel.hashPassword('house123'),
+          fullName: 'Housekeeping User',
+          role: StaffRole.housekeeping,
+          isActive: true,
+          createdAt: now,
+        ).toMap());
   }
 }

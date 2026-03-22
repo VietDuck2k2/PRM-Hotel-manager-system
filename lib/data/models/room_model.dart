@@ -9,6 +9,7 @@ class RoomModel {
   final int roomTypeId;
   final RoomStatus status;
   final String? notes;
+  final int checkoutSinceLastFloorClean;
 
   const RoomModel({
     this.id,
@@ -16,6 +17,7 @@ class RoomModel {
     required this.roomTypeId,
     required this.status,
     this.notes,
+    this.checkoutSinceLastFloorClean = 0,
   });
 
   Map<String, dynamic> toMap() {
@@ -25,6 +27,7 @@ class RoomModel {
       'roomTypeId': roomTypeId,
       'status': status.toDbString(),
       'notes': notes,
+      'checkoutSinceLastFloorClean': checkoutSinceLastFloorClean,
     };
   }
 
@@ -35,6 +38,8 @@ class RoomModel {
       roomTypeId: map['roomTypeId'] as int,
       status: RoomStatus.fromString(map['status'] as String),
       notes: map['notes'] as String?,
+      checkoutSinceLastFloorClean:
+          (map['checkoutSinceLastFloorClean'] as int?) ?? 0,
     );
   }
 
@@ -44,6 +49,7 @@ class RoomModel {
     int? roomTypeId,
     RoomStatus? status,
     String? notes,
+    int? checkoutSinceLastFloorClean,
   }) {
     return RoomModel(
       id: id ?? this.id,
@@ -51,10 +57,12 @@ class RoomModel {
       roomTypeId: roomTypeId ?? this.roomTypeId,
       status: status ?? this.status,
       notes: notes ?? this.notes,
+      checkoutSinceLastFloorClean:
+          checkoutSinceLastFloorClean ?? this.checkoutSinceLastFloorClean,
     );
   }
 
   @override
   String toString() =>
-      'RoomModel(id: $id, roomNumber: $roomNumber, status: $status)';
+      'RoomModel(id: $id, roomNumber: $roomNumber, status: $status, floorCounter: $checkoutSinceLastFloorClean)';
 }

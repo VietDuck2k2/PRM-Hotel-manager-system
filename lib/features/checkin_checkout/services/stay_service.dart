@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import '../../../data/repositories/booking_repository.dart';
 import '../../../data/repositories/room_repository.dart';
 import '../../../data/repositories/surcharge_repository.dart';
+import '../../../data/models/housekeeping_task_model.dart';
+import '../../../data/repositories/housekeeping_task_repository.dart';
 import '../../../data/models/invoice_model.dart';
 import '../../../data/models/booking_model.dart';
 import '../../../core/constants/app_enums.dart';
@@ -14,14 +16,18 @@ class StayService {
   final BookingRepository _bookingRepo;
   final RoomRepository _roomRepo;
   final SurchargeRepository _surchargeRepo;
+  final HousekeepingTaskRepository _housekeepingRepo;
 
   StayService({
     BookingRepository? bookingRepo,
     RoomRepository? roomRepo,
     SurchargeRepository? surchargeRepo,
+    HousekeepingTaskRepository? housekeepingTaskRepository,
   })  : _bookingRepo = bookingRepo ?? BookingRepository(),
         _roomRepo = roomRepo ?? RoomRepository(),
-        _surchargeRepo = surchargeRepo ?? SurchargeRepository();
+        _surchargeRepo = surchargeRepo ?? SurchargeRepository(),
+        _housekeepingRepo =
+            housekeepingTaskRepository ?? HousekeepingTaskRepository();
 
   Future<CheckInEvaluation> evaluateBookingForCheckIn(int bookingId) async {
     final booking = await _bookingRepo.getBookingById(bookingId);
@@ -178,11 +184,38 @@ class StayService {
       );
 
       // After checkout, room becomes DIRTY for housekeeping.
-      await txn.update(
+      final roomRows = await txn.query(
         DbSchema.tableRooms,
-        {'status': RoomStatus.dirty.toDbString()},
+        columns: const ['checkoutSinceLastFloorClean'],
+        where: 'id = ?',
+        whereArgs: [roomId],
+        limit: 1,
+      );
+      if (roomRows.isEmpty) {
+        throw StateError('Room not found during checkout.');
+      }
+      final currentCounter =
+          (roomRows.first['checkoutSinceLastFloorClean'] as int?) ?? 0;
+      final nextCounter = currentCounter + 1;
+
+      final updatedRows = await txn.update(
+        DbSchema.tableRooms,
+        {
+          'status': RoomStatus.dirty.toDbString(),
+          'checkoutSinceLastFloorClean': nextCounter,
+        },
         where: 'id = ? AND status = ?',
         whereArgs: [roomId, RoomStatus.occupied.toDbString()],
+      );
+      if (updatedRows == 0) {
+        throw StateError('Room status could not be updated during checkout.');
+      }
+
+      await _housekeepingRepo.ensureTaskForDirtyRoom(
+        roomId: roomId,
+        source: HousekeepingTaskSource.checkout,
+        checkoutSinceLastFloorClean: nextCounter,
+        executor: txn,
       );
     });
 

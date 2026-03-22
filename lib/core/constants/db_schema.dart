@@ -8,12 +8,13 @@ class DbSchema {
   static const String tableUsers = 'users';
   static const String tableRoomTypes = 'room_types';
   static const String tableRooms = 'rooms';
+  static const String tableHousekeepingTasks = 'housekeeping_tasks';
   static const String tableBookings = 'bookings';
   static const String tableSurcharges = 'surcharges';
   static const String tableInvoices = 'invoices';
 
   // ─── Database version ─────────────────────────────────────────────────────
-  static const int dbVersion = 1;
+  static const int dbVersion = 2;
 
   // ─── CREATE TABLE Statements ──────────────────────────────────────────────
 
@@ -48,6 +49,7 @@ class DbSchema {
       roomTypeId INTEGER NOT NULL,
       status TEXT NOT NULL DEFAULT 'AVAILABLE',
       notes TEXT,
+      checkoutSinceLastFloorClean INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (roomTypeId) REFERENCES $tableRoomTypes(id)
     )
   ''';
@@ -103,6 +105,27 @@ class DbSchema {
   // Exactly one Invoice per Booking (UNIQUE constraint on bookingId)
   // Invoice is created only during checkout — never created earlier
 
+  static const String createHousekeepingTasks = '''
+    CREATE TABLE IF NOT EXISTS $tableHousekeepingTasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      roomId INTEGER NOT NULL,
+      sourceType TEXT NOT NULL,
+      status TEXT NOT NULL,
+      assignedHousekeeperId INTEGER,
+      assignedHousekeeperName TEXT,
+      dirtyAt INTEGER NOT NULL,
+      startedAt INTEGER,
+      finishedAt INTEGER,
+      needChangeSheets INTEGER NOT NULL,
+      needCleanBathroom INTEGER NOT NULL,
+      needMopFloor INTEGER NOT NULL,
+      doneChangeSheets INTEGER NOT NULL DEFAULT 0,
+      doneCleanBathroom INTEGER NOT NULL DEFAULT 0,
+      doneMopFloor INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (roomId) REFERENCES $tableRooms(id)
+    )
+  ''';
+
   static List<String> get allCreateStatements => [
         createUsers,
         createRoomTypes,
@@ -110,5 +133,6 @@ class DbSchema {
         createBookings,
         createSurcharges,
         createInvoices,
+        createHousekeepingTasks,
       ];
 }

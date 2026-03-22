@@ -8,6 +8,8 @@ import '../../../data/models/room_model.dart';
 import '../../../data/models/room_type_model.dart';
 import '../../../data/repositories/room_repository.dart';
 import '../../../data/repositories/room_type_repository.dart';
+import '../../../data/repositories/housekeeping_task_repository.dart';
+import '../../../data/models/housekeeping_task_model.dart';
 
 class RoomStatusBadge extends StatelessWidget {
   final RoomStatus status;
@@ -526,6 +528,8 @@ class RoomListScreen extends StatefulWidget {
 class _RoomListScreenState extends State<RoomListScreen> {
   final RoomRepository _roomRepository = RoomRepository();
   final RoomTypeRepository _roomTypeRepository = RoomTypeRepository();
+  final HousekeepingTaskRepository _housekeepingTaskRepository =
+      HousekeepingTaskRepository();
 
   bool _loading = false;
   bool _initialLoadDone = false;
@@ -758,6 +762,13 @@ class _RoomListScreenState extends State<RoomListScreen> {
 
     try {
       await _roomRepository.updateStatus(room.id!, newStatus);
+      if (newStatus == RoomStatus.dirty) {
+        await _housekeepingTaskRepository.ensureTaskForDirtyRoom(
+          roomId: room.id!,
+          source: HousekeepingTaskSource.manualDirty,
+          checkoutSinceLastFloorClean: room.checkoutSinceLastFloorClean,
+        );
+      }
       if (!mounted) return;
       final label = newStatus.toDbString().replaceAll('_', ' ');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1054,6 +1065,8 @@ class _RoomFormScreenState extends State<RoomFormScreen> {
         roomTypeId: roomTypeId,
         status: status,
         notes: notes.isEmpty ? null : notes,
+        checkoutSinceLastFloorClean:
+            _existingRoom?.checkoutSinceLastFloorClean ?? 0,
       );
 
       if (_isEdit) {
