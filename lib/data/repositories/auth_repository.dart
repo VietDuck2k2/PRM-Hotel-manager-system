@@ -1,3 +1,5 @@
+import 'package:sqflite/sqflite.dart';
+
 import '../../core/database/database_helper.dart';
 import '../../core/constants/db_schema.dart';
 import '../models/user_model.dart';
@@ -12,14 +14,22 @@ class AuthRepository {
 
   /// Verify credentials and return the matching [UserModel], or null if invalid.
   Future<UserModel?> login(String username, String password) async {
+    if (username.trim().isEmpty || password.isEmpty) return null;
     final db = await _dbHelper.database;
+    final normalizedUsername = username.trim().toLowerCase();
     final hash = UserModel.hashPassword(password);
-    final result = await db.query(
-      DbSchema.tableUsers,
-      where: 'username = ? AND passwordHash = ? AND isActive = 1',
-      whereArgs: [username, hash],
-    );
-    if (result.isEmpty) return null;
-    return UserModel.fromMap(result.first);
+
+    try {
+      final result = await db.query(
+        DbSchema.tableUsers,
+        where: 'LOWER(username) = ? AND passwordHash = ? AND isActive = 1',
+        whereArgs: [normalizedUsername, hash],
+        limit: 1,
+      );
+      if (result.isEmpty) return null;
+      return UserModel.fromMap(result.first);
+    } on DatabaseException {
+      return null;
+    }
   }
 }

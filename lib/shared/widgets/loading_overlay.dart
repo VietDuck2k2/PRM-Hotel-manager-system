@@ -19,32 +19,43 @@ class LoadingOverlay extends StatelessWidget {
       children: [
         child,
         if (isLoading)
-          Container(
-            color: Colors.black.withAlpha(76), // 0.3 opacity
-            child: Center(
-              child: Card(
-                color: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 32.0, vertical: 24.0),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const CircularProgressIndicator(),
-                      if (loadingText != null) ...[
-                        const SizedBox(height: 16),
-                        Text(
-                          loadingText!,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500,
-                          ),
+          Positioned.fill(
+            child: AbsorbPointer(
+              absorbing: true,
+              child: Container(
+                color: Colors.black.withValues(alpha: 0.35),
+                child: Center(
+                  child: Semantics(
+                    label: loadingText ?? 'Loading',
+                    value: 'In progress',
+                    child: Card(
+                      color: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 32,
+                          vertical: 24,
                         ),
-                      ],
-                    ],
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const CircularProgressIndicator(),
+                            if (loadingText != null) ...[
+                              const SizedBox(height: 16),
+                              Text(
+                                loadingText!,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),

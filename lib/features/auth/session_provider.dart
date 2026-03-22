@@ -17,18 +17,28 @@ class SessionProvider extends ChangeNotifier {
   bool get isLoggedIn => _currentUser != null;
   StaffRole? get role => _currentUser?.role;
   int? get userId => _currentUser?.id;
+  String? get username => _currentUser?.username;
+  String? get fullName => _currentUser?.fullName;
 
   /// Attempt login. Returns true on success.
   Future<bool> login(String username, String password) async {
-    final user = await _authRepository.login(username, password);
-    if (user == null) return false;
-    _currentUser = user;
-    notifyListeners();
-    return true;
+    final trimmedUsername = username.trim();
+    if (trimmedUsername.isEmpty) return false;
+    try {
+      final user = await _authRepository.login(trimmedUsername, password);
+      if (user == null) return false;
+      _currentUser = user;
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   void logout() {
     _currentUser = null;
     notifyListeners();
   }
+
+  void clearSession() => logout();
 }
